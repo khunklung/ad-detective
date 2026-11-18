@@ -413,14 +413,31 @@ function pdfFileName(){
 }
 async function createPDFBlob(){
  if(typeof html2pdf!=="function")throw new Error("PDF_LIBRARY_UNAVAILABLE");
- const target=$("reportContent");
- const options={
-  margin:[12,12,12,12],filename:pdfFileName(),image:{type:"jpeg",quality:0.96},
-  html2canvas:{scale:2,useCORS:true,backgroundColor:"#ffffff",logging:false},
+ /* รอให้ฟอนต์ไทยโหลดครบก่อน เพื่อไม่ให้ตัวอักษรหาย/ว่าง */
+ try{if(document.fonts&&document.fonts.ready)await document.fonts.ready}catch(e){}
+ /* สำคัญ: html2canvas จะได้ภาพว่างถ้าหน้าเว็บกำลังเลื่อนอยู่ จึงต้องเลื่อนกลับบนสุดก่อน */
+ const prevY=window.scrollY||window.pageYOffset||0;
+ window.scrollTo(0,0);
+ await new Promise(r=>setTimeout(r,250));
+ /* สร้างสำเนารายงานความกว้างคงที่ ไม่พึ่งสไตล์ของหน้าจอมือถือ/แอปไลน์ */
+ const src=$("reportContent");
+ const wrap=document.createElement("div");
+ wrap.style.cssText="position:absolute;left:0;top:0;width:700px;box-sizing:border-box;padding:8px 6px;background:#ffffff;color:#24211f;font-family:'Sarabun',sans-serif;font-size:15px;line-height:1.7;";
+ wrap.innerHTML='<h3 style="font-family:\'Noto Serif Thai\',serif;margin:0 0 6px;color:#24211f;font-size:20px">รายงานวิเคราะห์โฆษณา · AD DETECTIVE</h3>'+src.innerHTML;
+ wrap.querySelectorAll(".report-block").forEach(b=>{b.style.cssText+=";page-break-inside:avoid;break-inside:avoid;"});
+ document.body.appendChild(wrap);
+ const make=scale=>html2pdf().set({
+  margin:[12,12,12,12],filename:pdfFileName(),image:{type:"jpeg",quality:0.95},
+  html2canvas:{scale:scale,useCORS:true,backgroundColor:"#ffffff",logging:false,scrollX:0,scrollY:0,windowWidth:760,x:0,y:0},
   jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
-  pagebreak:{mode:["css","legacy"]}
- };
- return await html2pdf().set(options).from(target).outputPdf("blob");
+  pagebreak:{mode:["css","legacy"],avoid:".report-block"}
+ }).from(wrap).outputPdf("blob");
+ try{
+  try{return await make(1.5)}catch(e){return await make(1)}
+ }finally{
+  wrap.remove();
+  window.scrollTo(0,prevY);
+ }
 }
 function savePDF(blob){
  const url=URL.createObjectURL(blob),a=document.createElement("a");
