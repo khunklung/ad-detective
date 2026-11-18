@@ -256,10 +256,10 @@ summary{font-weight:700;cursor:pointer;color:var(--ruby)}
    <div class="btn-row no-print">
     <button class="btn btn-secondary" onclick="downloadJSON()">ดาวน์โหลดไฟล์คำตอบ (.json)</button>
     <button class="btn btn-share" id="sharePdfBtn" onclick="sharePDF()">แชร์ / ส่งงาน PDF</button>
-    <button class="btn btn-primary" onclick="window.print()">พิมพ์ / บันทึก PDF</button>
+    <button class="btn btn-primary" id="savePdfBtn" onclick="downloadPDF()">บันทึก PDF ลงเครื่อง</button>
    </div>
    <div class="share-note"><strong>ส่งงานผ่านมือถือ:</strong> กด “แชร์ / ส่งงาน PDF” แล้วเลือก LINE หรือแอปที่ต้องการจากเมนูแชร์ของเครื่อง หากแชร์ไฟล์ไม่ได้ ระบบจะดาวน์โหลด PDF ให้แทน</div>
-   <p class="hint">หากใช้คอมพิวเตอร์หรือเบราว์เซอร์ที่ไม่รองรับการแชร์ไฟล์ ให้ใช้ปุ่มดาวน์โหลด PDF หรือพิมพ์ / บันทึก PDF เป็นทางเลือก</p>
+   <p class="hint">หากแชร์ไฟล์ไม่ได้ ให้กด “บันทึก PDF ลงเครื่อง” แล้วนำไฟล์ไปแนบส่งเอง</p>
   </div>
  </section>
 
@@ -282,7 +282,7 @@ summary{font-weight:700;cursor:pointer;color:var(--ruby)}
 </main>
 <div class="toast" id="toast" role="status" aria-live="assertive" aria-atomic="true"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" referrerpolicy="no-referrer"></script>
 <script>
 (function(){
 "use strict";
@@ -412,37 +412,119 @@ function pdfFileName(){
  return "AD_DETECTIVE_"+safe+"_"+(d.student.studentNo||"student")+".pdf";
 }
 async function createPDFBlob(){
- if(typeof html2pdf!=="function")throw new Error("PDF_LIBRARY_UNAVAILABLE");
- /* รอให้ฟอนต์ไทยโหลดครบก่อน เพื่อไม่ให้ตัวอักษรหาย/ว่าง */
- try{if(document.fonts&&document.fonts.ready)await document.fonts.ready}catch(e){}
- /* สำคัญ: html2canvas จะได้ภาพว่างถ้าหน้าเว็บกำลังเลื่อนอยู่ จึงต้องเลื่อนกลับบนสุดก่อน */
- const prevY=window.scrollY||window.pageYOffset||0;
- window.scrollTo(0,0);
- await new Promise(r=>setTimeout(r,250));
- /* สร้างสำเนารายงานความกว้างคงที่ ไม่พึ่งสไตล์ของหน้าจอมือถือ/แอปไลน์ */
+ /* วาดรายงานลง canvas เองทีละหน้า แล้วใส่ใน jsPDF — ไม่ใช้ html2canvas ที่ได้หน้าขาวในมือถือ/แอปไลน์ */
+ const JsPDF=window.jspdf&&window.jspdf.jsPDF;
+ if(!JsPDF)throw new Error("PDF_LIBRARY_UNAVAILABLE");
  const src=$("reportContent");
- const wrap=document.createElement("div");
- wrap.style.cssText="position:absolute;left:0;top:0;width:700px;box-sizing:border-box;padding:8px 6px;background:#ffffff;color:#24211f;font-family:'Sarabun',sans-serif;font-size:15px;line-height:1.7;";
- wrap.innerHTML='<h3 style="font-family:\'Noto Serif Thai\',serif;margin:0 0 6px;color:#24211f;font-size:20px">รายงานวิเคราะห์โฆษณา · AD DETECTIVE</h3>'+src.innerHTML;
- wrap.querySelectorAll(".report-block").forEach(b=>{b.style.cssText+=";page-break-inside:avoid;break-inside:avoid;"});
- document.body.appendChild(wrap);
- const make=scale=>html2pdf().set({
-  margin:[12,12,12,12],filename:pdfFileName(),image:{type:"jpeg",quality:0.95},
-  html2canvas:{scale:scale,useCORS:true,backgroundColor:"#ffffff",logging:false,scrollX:0,scrollY:0,windowWidth:760,x:0,y:0},
-  jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
-  pagebreak:{mode:["css","legacy"],avoid:".report-block"}
- }).from(wrap).outputPdf("blob");
+ const introEl=src.querySelector("p");
+ const intro=introEl?introEl.textContent:"";
+ const blocks=Array.from(src.querySelectorAll(".report-block")).map(b=>({
+  title:(b.querySelector("h4")||{}).textContent||"",
+  body:(b.querySelector("p")||{}).textContent||""
+ }));
+ const S=2,W=794,H=1123,M=56,CW=W-2*M,LH=27,BOTTOM=H-M-14;
+ const ruby=(getComputedStyle(document.documentElement).getPropertyValue("--ruby")||"").trim()||"#9b2f2f";
+ const SERIF='"Noto Serif Thai","Sarabun",serif',SANS='"Sarabun","Noto Sans Thai",sans-serif';
+ /* รอฟอนต์ไทยโหลดจริง (ระบุข้อความจริงเพื่อให้โหลดชุดอักษรไทยครบ) */
+ const all=intro+blocks.map(b=>b.title+b.body).join("")+"รายงานวิเคราะห์โฆษณา";
  try{
-  try{return await make(1.5)}catch(e){return await make(1)}
- }finally{
-  wrap.remove();
-  window.scrollTo(0,prevY);
+  if(document.fonts&&document.fonts.load){
+   await Promise.all([
+    document.fonts.load('700 24px "Noto Serif Thai"',all),
+    document.fonts.load('400 16px "Sarabun"',all),
+    document.fonts.load('700 16px "Sarabun"',all)
+   ]);
+  }
+  if(document.fonts&&document.fonts.ready)await document.fonts.ready;
+ }catch(e){}
+ /* ตัดคำ: ใช้ Intl.Segmenter ถ้ามี ไม่งั้นตัดทีละตัวอักษร (รวมสระ/วรรณยุกต์ไว้กับพยัญชนะ) */
+ const charTokens=t=>{
+  const out=[];
+  for(const ch of t){
+   if(out.length&&/[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(ch))out[out.length-1]+=ch;else out.push(ch);
+  }
+  return out;
+ };
+ const seg=(typeof Intl!=="undefined"&&Intl.Segmenter)?new Intl.Segmenter("th",{granularity:"word"}):null;
+ const tokens=t=>seg?Array.from(seg.segment(t),x=>x.segment):charTokens(t);
+ function wrap(ctx,text,maxW){
+  const lines=[];
+  String(text).split(/\r?\n/).forEach(par=>{
+   if(!par.trim()){lines.push("");return}
+   let cur="";
+   const flush=()=>{if(cur.trim())lines.push(cur.replace(/\s+$/,""));cur=""};
+   tokens(par).forEach(tk=>{
+    if(ctx.measureText(cur+tk).width<=maxW){cur+=tk;return}
+    flush();
+    if(!tk.trim())return;
+    if(ctx.measureText(tk).width<=maxW){cur=tk;return}
+    charTokens(tk).forEach(c=>{
+     if(ctx.measureText(cur+c).width<=maxW){cur+=c}else{flush();cur=c}
+    });
+   });
+   flush();
+  });
+  return lines;
  }
+ const pages=[];let cv,ctx,y;
+ function font(weight,size,family,color){ctx.font=weight+" "+size+"px "+family;ctx.fillStyle=color;ctx.textAlign="left";ctx.textBaseline="alphabetic"}
+ function newPage(){
+  cv=document.createElement("canvas");cv.width=W*S;cv.height=H*S;
+  ctx=cv.getContext("2d");ctx.scale(S,S);
+  ctx.fillStyle="#ffffff";ctx.fillRect(0,0,W,H);
+  y=M;pages.push(cv);
+ }
+ function rule(color,w){ctx.fillStyle=color;ctx.fillRect(M,y,CW,w)}
+ newPage();
+ font("700",24,SERIF,"#24211f");ctx.fillText("รายงานวิเคราะห์โฆษณา",M,y+24);y+=36;
+ font("400",14,SANS,"#706963");ctx.fillText("AD DETECTIVE · ภารกิจนักสืบโฆษณา",M,y+14);y+=26;
+ rule(ruby,2);y+=16;
+ font("400",16,SANS,"#24211f");
+ wrap(ctx,intro,CW).forEach(l=>{ctx.fillText(l,M,y+17);y+=LH});
+ y+=8;
+ blocks.forEach(b=>{
+  font("400",16,SANS,"#24211f");
+  const lines=wrap(ctx,b.body||"—",CW);
+  if(y+30+LH*Math.min(lines.length,2)>BOTTOM)newPage();
+  font("700",17,SERIF,ruby);ctx.fillText(b.title,M,y+18);y+=30;
+  lines.forEach(l=>{
+   if(y+LH>BOTTOM){newPage();}
+   font("400",16,SANS,"#24211f");
+   if(l)ctx.fillText(l,M,y+17);
+   y+=LH;
+  });
+  y+=6;
+  if(y<BOTTOM){rule("#e8ded2",1);y+=14}
+ });
+ pages.forEach((c,i)=>{
+  const g=c.getContext("2d");
+  g.font="400 12px "+SANS;g.fillStyle="#706963";g.textAlign="center";g.textBaseline="alphabetic";
+  g.fillText("AD DETECTIVE · หน้า "+(i+1)+"/"+pages.length,W/2,H-28);
+ });
+ const pdf=new JsPDF({unit:"mm",format:"a4",orientation:"portrait",compress:true});
+ pages.forEach((c,i)=>{
+  if(i)pdf.addPage();
+  pdf.addImage(c.toDataURL("image/jpeg",0.92),"JPEG",0,0,210,297,undefined,"FAST");
+ });
+ return pdf.output("blob");
 }
 function savePDF(blob){
  const url=URL.createObjectURL(blob),a=document.createElement("a");
  a.href=url;a.download=pdfFileName();document.body.appendChild(a);a.click();a.remove();
  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+async function downloadPDF(){
+ const btn=$("savePdfBtn");
+ if(!$("reportPreview")||$("reportPreview").style.display==="none"){notify("กรุณาสร้างรายงานฉบับสมบูรณ์ก่อนบันทึก","warn");return}
+ if(btn){btn.disabled=true;btn.textContent="กำลังสร้างไฟล์ PDF…"}
+ try{
+  const blob=await createPDFBlob();
+  savePDF(blob);
+  notify("บันทึกไฟล์ PDF แล้ว ตรวจในโฟลเดอร์ดาวน์โหลดของเครื่อง","good");
+ }catch(err){
+  console.error(err);
+  notify("สร้าง PDF ไม่สำเร็จ ลองเปิดหน้านี้ด้วย Chrome หรือ Safari แล้วกดอีกครั้ง","error");
+ }finally{if(btn){btn.disabled=false;btn.textContent="บันทึก PDF ลงเครื่อง"}}
 }
 async function sharePDF(){
  const btn=$("sharePdfBtn");
@@ -475,7 +557,7 @@ document.querySelectorAll(".nav-step").forEach(b=>b.addEventListener("click",()=
 fields.forEach(id=>{const el=$(id);if(el){el.addEventListener("input",save);el.addEventListener("change",save)}});
 ["purpose","audience","distinction"].forEach(n=>document.querySelectorAll('input[name="'+n+'"]').forEach(el=>el.addEventListener("change",save)));
 load();updateProgress();
-window.goTo=goTo;window.completeMission=completeMission;window.buildReport=buildReport;window.downloadJSON=downloadJSON;window.sharePDF=sharePDF;
+window.goTo=goTo;window.completeMission=completeMission;window.buildReport=buildReport;window.downloadJSON=downloadJSON;window.sharePDF=sharePDF;window.downloadPDF=downloadPDF;
 })();
 </script>
 </body>
